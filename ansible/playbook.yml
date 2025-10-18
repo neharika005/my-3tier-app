@@ -1,0 +1,118 @@
+
+- name: Setup Frontend Server (Nginx)
+  hosts: frontend
+  become: yes
+  vars:
+    web_root: /var/www/html
+  tasks:
+    - name: Install Nginx
+      dnf:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Ensure web root exists
+      file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: nginx
+        group: nginx
+        mode: '0755'
+
+    - name: Add sample index.html
+      copy:
+        content: "<h1>Frontend is up!</h1>"
+        dest: "{{ web_root }}/index.html"
+        owner: nginx
+        group: nginx
+        mode: '0644'
+      notify: restart nginx
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+
+- name: Setup Backend Server (Tomcat)
+  hosts: backend
+  become: yes
+  vars:
+    tomcat_version: 9.0.111
+    tomcat_url: "https://downloads.apache.org/tomcat/tomcat-9/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.tar.gz"
+    tomcat_install_dir: /opt/tomcat
+  tasks:
+    - name: Install Java
+      dnf:
+        name: java-1.8.0-openjdk
+        state: present
+
+    - name: Ensure Tomcat install directory exists
+      file:
+        path: "{{ tomcat_install_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+    - name: Download Tomcat tar.gz
+      get_url:
+        url: "{{ tomcat_url }}"
+        dest: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+
+    - name: Extract Tomcat
+      unarchive:
+        src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "{{ tomcat_install_dir }}"
+        remote_src: yes
+        creates: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+
+    - name: Set Tomcat permissions
+      file:
+        path: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+        state: directory
+        recurse: yes
+        owner: ec2-user
+        group: ec2-user
+
+    - name: Start Tomcat
+      shell: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}/bin/startup.sh"
+      args:
+        executable: /bin/bash
+
+
+- name: Setup MySQL 8 Server in Docker
+  hosts: mysql
+  become: yes
+  vars:
+    mysql_root_pass: "RootPass123"
+    mysql_db: appdb
+    mysql_user: appuser
+    mysql_user_pass: "UserPass123"
+  tasks:
+    - name: Install Docker
+      dnf:
+        name: docker
+        state: present
+        update_cache: yes
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Run MySQL 8 container
+      community.docker.docker_container:
+        name: mysql8
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: "{{ mysql_root_pass }}"
+          MYSQL_DATABASE: "{{ mysql_db }}"
+          MYSQL_USER: "{{ mysql_user }}"
+          MYSQL_PASSWORD: "{{ mysql_user_pass }}"
+        ports:
+          - "3306:3306"
+        state: started
+        restart_policy: unless-stopped
